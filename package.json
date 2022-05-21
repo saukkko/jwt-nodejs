@@ -6,11 +6,18 @@
   "main": "./lib/index.js",
   "scripts": {
     "start": "node ./lib/index.js",
+    "install": "npm run build",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Sauli Kylmänen",
   "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "devDependencies": {
     "@types/node": "^17.0.27",
     "@typescript-eslint/eslint-plugin": "^5.21.0",

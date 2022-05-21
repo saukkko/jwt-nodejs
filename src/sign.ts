@@ -1,5 +1,14 @@
-import { createHmac } from "crypto";
-import { JSONToBase64UrlString } from "./util.js";
+import { createHmac, createSign, verify } from "crypto";
+import {
+  JSONToBase64UrlString,
+  hmacAlgos,
+  rsaAlgos,
+  ecdsaAlgos,
+  rsaPssAlgos,
+  base64UrlStringToJSON,
+} from "./util.js";
+import type { JOSEHeader } from "./types.js";
+import { KeyObject } from "crypto";
 
 /**
  *
@@ -11,7 +20,7 @@ import { JSONToBase64UrlString } from "./util.js";
 export const signJWT = async (
   header: JOSEHeader,
   payload: Record<string, unknown>,
-  secret: string
+  secret: string | KeyObject
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const data = [
@@ -23,12 +32,14 @@ export const signJWT = async (
       let algo = Object.entries(hmacAlgos).find(
         (hmac) => header.alg === hmac[0]
       );
-      if (algo) data.push(signWithHmac(algo[1], secret, data));
+      if (algo && typeof secret === "string")
+        data.push(signWithHmac(algo[1], secret, data));
+
+      algo = Object.entries(rsaAlgos).find((rsa) => header.alg === rsa[0]);
+      if (algo && secret instanceof KeyObject)
+        data.push(signWithRsa(algo[1], secret, data));
 
       // TODO: Implement everything and tidy up
-      algo = Object.entries(rsaAlgos).find((rsa) => header.alg === rsa[0]);
-      if (algo) throw new Error("RSA signing not yet implemented");
-
       algo = Object.entries(ecdsaAlgos).find(
         (ecdsa) => header.alg === ecdsa[0]
       );
@@ -47,6 +58,42 @@ export const signJWT = async (
   });
 };
 
+export const verifyJWT = async (
+  token: string,
+  secret: string,
+  pubKey?: KeyObject
+): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    try {
+      const [encHeader, encPayload, recvSignature] = token.split(".");
+      const header: JOSEHeader = base64UrlStringToJSON(encHeader);
+
+      let signature;
+
+      let algo = Object.entries(hmacAlgos).find(
+        (hmac) => header.alg === hmac[0]
+      );
+      if (algo)
+        signature = signWithHmac(algo[1], secret, [encHeader, encPayload]);
+
+      algo = Object.entries(rsaAlgos).find((rsa) => header.alg === rsa[0]);
+      if (algo && pubKey)
+        resolve(
+          verify(
+            algo[1],
+            Buffer.from([encHeader, encPayload].join(".")),
+            pubKey,
+            Buffer.from(recvSignature, "base64")
+          )
+        );
+
+      resolve(signature === recvSignature);
+    } catch (err) {
+      reject(err);
+    }
+  });
+};
+
 const signWithHmac = (algo: string, secret: string, data: string[]) => {
   const hmac = createHmac(algo, Buffer.from(secret, "base64"));
   hmac.update(data.join("."));
@@ -54,33 +101,9 @@ const signWithHmac = (algo: string, secret: string, data: string[]) => {
   return hmac.digest("base64url");
 };
 
-const hmacAlgos = {
-  HS256: "sha256",
-  HS384: "sha384",
-  HS512: "sha512",
-};
+const signWithRsa = (algo: string, privateKey: KeyObject, data: string[]) => {
+  const rsa = createSign(algo);
+  rsa.update(data.join("."));
 
-const rsaAlgos = {
-  RS256: "rsa-sha256",
-  RS384: "rsa-sha384",
-  RS512: "rsa-sha512",
+  return rsa.sign(privateKey).toString("base64url");
 };
-const ecdsaAlgos = {
-  ES256: "ecdsa256",
-  ES384: "ecdsa384",
-  ES512: "ecdsa512",
-};
-const rsaPssAlgos = {
-  PS256: "unknown",
-  PS384: "unknown",
-  PS512: "unknown",
-};
-
-type JOSEHeader = {
-  typ: "JWT";
-  alg: HmacAlgos | RsaAlgos | EcdsaAlgos | RsaPssAlgos;
-};
-type HmacAlgos = "HS256" | "HS384" | "HS512";
-type RsaAlgos = "RS256" | "RS384" | "RS512";
-type EcdsaAlgos = "ES256" | "ES384" | "ES512";
-type RsaPssAlgos = "PS256" | "PS384" | "PS512";
